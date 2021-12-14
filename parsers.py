@@ -12,7 +12,7 @@ def get_training_parser(parser:argparse.ArgumentParser=None) -> argparse.Argumen
     if not parser:
         parser =argparse.ArgumentParser()
     parser.add_argument("--config_file",type=str, default="hparams/origin.json")
-    parser.add_argument("--dataset",type=str,default='data/kiritan2021-12-07_20-40-44.csv')
+    parser.add_argument("--dataset",type=str)
     parser.add_argument("--epochs",type=int,default=10)
     parser.add_argument("--logdir",type=str,default="training_log")
     parser.add_argument("--logname",type=str,default="default")
