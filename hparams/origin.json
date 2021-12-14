@@ -14,7 +14,7 @@
     "f_min":0,
     "f_max":8000,
     "num_mels":80,
-    "breath_len":44100,
+    "breath_len":110250,
     "n_fft":1024,
     "hop_len":256,
     "win_len":1024,
