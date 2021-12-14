@@ -1,3 +1,10 @@
+# options
+data
+parameters
+runs
+!dataset.
+training_log
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
