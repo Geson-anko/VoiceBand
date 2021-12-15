@@ -25,6 +25,7 @@ if __name__ == "__main__":
     num_workers = args.num_workers
     max_data_length = args.max_length
     view_interval = args.view_interval
+    log_every_n_steps=args.log_every_n_steps
 
     config = load_config(config_file)
     batch_size = config.batch_size
@@ -33,7 +34,7 @@ if __name__ == "__main__":
 
     # set logger
     logger = pl_loggers.TensorBoardLogger(logdir,logname)
-    trainer = pl.Trainer(logger=logger,gpus=num_gpus,num_nodes=num_nodes,precision=precision,max_epochs=epochs)
+    trainer = pl.Trainer(logger=logger,gpus=num_gpus,num_nodes=num_nodes,precision=precision,max_epochs=epochs,log_every_n_steps=log_every_n_steps)
     
     # model
     model = VoiceBand(config)

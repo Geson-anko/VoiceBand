@@ -103,8 +103,10 @@ class Encoder(nn.Module):
                 self.resblocks.append(ResBlock(ch,k,d))
         
         self.conv_post = weight_norm(nn.Conv1d(self.channels[-1],h.ratent_dim,self.L_ins[-1]))
+        self.conv_post_var = weight_norm(nn.Conv1d(self.channels[-1],h.ratent_dim,self.L_ins[-1]))
         self.dns.apply(init_weights)
         self.conv_post.apply(init_weights)
+        self.conv_post_var.apply(init_weights)
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         x = self.conv_pre(x)
@@ -119,15 +121,25 @@ class Encoder(nn.Module):
                     xs += self.resblocks[i*self.num_kernels+j](x)
             x = xs / self.num_kernels
         x = F.leaky_relu(x)
-        x = self.conv_post(x).tanh()
+        mean = self.conv_post(x)
+        var = F.softplus(self.conv_post_var(x)) + 1e-8
         
-        return x
+        return mean,var
 
-    def dual_flow(self, x1:torch.Tensor, x2:torch.Tensor) -> torch.Tensor:
-        out1 = self.forward(x1)
-        out2 = self.forward(x2)
-        out = torch.cat([out1, out2], dim=1)
+    def dual_flow(self, x1:torch.Tensor, x2:torch.Tensor,with_random:bool=True) -> torch.Tensor:
+        mean1,var1 = self.forward(x1)
+        mean2,var2 = self.forward(x2)
+        if with_random:
+            out1 = self.random_sample(mean1,var1)
+            out2 = self.random_sample(mean2,var2)
+        else:
+            out1,out2 = mean1,mean2
+        out = torch.cat([out1, out2], dim=1).tanh()
         return out
+
+    @staticmethod
+    def random_sample(mean:torch.Tensor, var:torch.Tensor):
+        return mean + torch.randn_like(mean)*torch.sqrt(var)
 
     def summary(self):
         dummy = torch.randn(1,1,self.h.n_fft)
@@ -235,15 +247,15 @@ class VoiceBand(pl.LightningModule):
         self.reset_seed()
         self.encoder = Encoder(h).type(dtype).to(self.device)
         self.decoder = Decoder(h).type(dtype).to(self.device)
-        self.silence = None
         self.n_fft = h.n_fft
         self.ratent_dim = h.ratent_dim
         self.walking_steps = int(h.breath_len / h.hop_len) + 1
         self.walking_resolution = h.walking_resolution
         self.out_len = self.decoder.out_len
         self.view_interval = 10
+        self.kl_lambda = h.kl_lambda
         # training settings
-        self.criterion = nn.MSELoss()
+        self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
 
         self.actions = walk_ratent_space(self.ratent_dim, self.walking_steps,self.walking_resolution,device=device,dtype=dtype)
@@ -254,9 +266,15 @@ class VoiceBand(pl.LightningModule):
         x1: (-1, 1, n_fft)
         x2: (-1, 1, n_fft)
         """ 
-        x = self.encoder.dual_flow(x1,x2)
-        out = self.decoder(x)
-        return out
+        mean1,var1 = self.encoder.forward(x1)
+        mean2,var2 = self.encoder.forward(x2)
+        mean,var = torch.cat([mean1,mean2],dim=1),torch.cat([var1,var2],dim=1)
+        out = self.encoder.random_sample(mean,var).tanh()
+        out = self.decoder(out)
+        return out,mean,var
+
+    def on_fit_start(self) -> None:
+        self.logger.log_hyperparams(self.h)
 
     def training_step(self, batch:Tuple[torch.Tensor], batch_idx) -> torch.Tensor:
         """
@@ -268,13 +286,22 @@ class VoiceBand(pl.LightningModule):
             sound= self.random_gain(sound)
 
         x1,x2,ans = sound[:,:,:self.h.n_fft], sound[:,:,-self.h.n_fft:], sound 
-        out = self.forward(x1,x2)
+        out,mean,var = self.forward(x1,x2)
         
-        loss = self.criterion(ans, out)
+        mse = self.MSE(ans, out)
         mae = self.MAE(ans,out)
+        KL = 0.5*torch.sum(
+            torch.pow(mean,2) +
+            var -
+            torch.log(var) -1 
+        ).sum() / out.size(0)
+        loss = self.kl_lambda * KL + mse
         self.log("loss",loss)
+        self.log("mse",mse)
         self.log("mae",mae)
+        self.log("KL div",KL)
         return loss
+
     @torch.no_grad()
     def on_epoch_end(self) -> None:
         """
@@ -287,8 +314,8 @@ class VoiceBand(pl.LightningModule):
                                         device=self.device,dtype=self.dtype)
         wave = None
         for act in self.actions.unsqueeze(1):
-            wave= self.predict_one_step(act,wave).cpu()
-        wave = wave.squeeze(0).T
+            wave= self.predict_one_step(act,wave)
+        wave = wave.squeeze(0).T.detach().cpu().numpy()
 
         # tensorboard logging
         tb:SummaryWriter = self.logger.experiment
@@ -313,7 +340,7 @@ class VoiceBand(pl.LightningModule):
         scheduler.last_epoch=self.trainer.max_epochs
         return [optim],[scheduler]
 
-        
+    silence = None
     def set_silence(self):
         self.silence = torch.zeros(1,self.h.sample_ch,self.n_fft,device=self.device,dtype=self.dtype)
     def set_view_interval(self, interval:int=None):
@@ -340,7 +367,7 @@ class VoiceBand(pl.LightningModule):
             previous_wave = torch.cat([pad,previous_wave],dim=-1)
         
         enc_in = previous_wave[:,:,-self.n_fft:].to(self.dtype).to(self.device)
-        encoded = self.encoder.forward(enc_in)
+        encoded = self.encoder.forward(enc_in)[0].tanh()
         dec_in = torch.cat([encoded,action],dim=1)
         d_out = self.decoder.forward(dec_in)[:,:,self.n_fft:].type_as(previous_wave)
         wave = torch.cat([previous_wave,d_out],dim=-1)

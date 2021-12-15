@@ -25,4 +25,5 @@ def get_training_parser(parser:argparse.ArgumentParser=None) -> argparse.Argumen
     parser.add_argument("--num_workers",type=int,default=0)
     parser.add_argument("--max_length",type=int,default=None)
     parser.add_argument("--view_interval",type=int,default=10)
+    parser.add_argument("--log_every_n_steps",type=int,default=64)
     return parser
