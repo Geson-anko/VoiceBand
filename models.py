@@ -134,7 +134,7 @@ class Encoder(nn.Module):
             out2 = self.random_sample(mean2,var2)
         else:
             out1,out2 = mean1,mean2
-        out = torch.cat([out1, out2], dim=1).tanh()
+        out = torch.cat([out1, out2], dim=1) #.tanh() # notanh
         return out
 
     @staticmethod
@@ -269,7 +269,7 @@ class VoiceBand(pl.LightningModule):
         mean1,var1 = self.encoder.forward(x1)
         mean2,var2 = self.encoder.forward(x2)
         mean,var = torch.cat([mean1,mean2],dim=1),torch.cat([var1,var2],dim=1)
-        out = self.encoder.random_sample(mean,var).tanh()
+        out = self.encoder.random_sample(mean,var)#.tanh()# notanh
         out = self.decoder(out)
         return out,mean,var
 
@@ -367,7 +367,7 @@ class VoiceBand(pl.LightningModule):
             previous_wave = torch.cat([pad,previous_wave],dim=-1)
         
         enc_in = previous_wave[:,:,-self.n_fft:].to(self.dtype).to(self.device)
-        encoded = self.encoder.forward(enc_in)[0].tanh()
+        encoded = self.encoder.forward(enc_in)[0]#.tanh()# notanh
         dec_in = torch.cat([encoded,action],dim=1)
         d_out = self.decoder.forward(dec_in)[:,:,self.n_fft:].type_as(previous_wave)
         wave = torch.cat([previous_wave,d_out],dim=-1)
