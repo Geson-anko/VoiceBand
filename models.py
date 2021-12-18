@@ -224,7 +224,7 @@ class Decoder(nn.Module):
         l = x.size(-1)
         start = int((l - self.out_len)/2)
         x = x[:,:,start:start+self.out_len]
-        x = torch.tanh(x)
+        #x = x.tanh() # grad explosion ?
         return x
 
     def summary(self):
@@ -286,8 +286,8 @@ class VoiceBand(pl.LightningModule):
             sound= self.random_gain(sound)
 
         x1,x2,ans = sound[:,:,:self.h.n_fft], sound[:,:,-self.h.n_fft:], sound 
-        out,mean,var = self.forward(x1,x2)
-        
+        out_,mean,var = self.forward(x1,x2)
+        out = out_.tanh() # atanh grad explotsion
         mse = self.MSE(ans, out)
         mae = self.MAE(ans,out)
         KL = 0.5*torch.sum(
@@ -295,8 +295,11 @@ class VoiceBand(pl.LightningModule):
             var -
             torch.log(var) -1 
         ).sum() / out.size(0)
-        marginal_likelihood = F.binary_cross_entropy(0.5*out+1,ans,reduction="sum")/out.size(0)
-        loss = marginal_likelihood + KL
+        #marginal_likelihood = self.BCEwithLogits(torch.atanh(out),0.5*ans+1)
+        #print(True in torch.isnan(out))
+        marginal_likelihood= F.binary_cross_entropy_with_logits(out,0.5*ans+1,reduction="sum") / out.size(0)
+
+        loss = marginal_likelihood + KL * self.kl_lambda
         #loss = self.kl_lambda * KL + mse
         self.log("loss",loss)
         self.log("mse",mse)
@@ -373,6 +376,7 @@ class VoiceBand(pl.LightningModule):
         encoded = self.encoder.forward(enc_in)[0]#.tanh()# notanh
         dec_in = torch.cat([encoded,action],dim=1)
         d_out = self.decoder.forward(dec_in)[:,:,self.n_fft:].type_as(previous_wave)
+        d_out = d_out.tanh() # grad explosion ?
         wave = torch.cat([previous_wave,d_out],dim=-1)
         return wave
         
