@@ -295,11 +295,14 @@ class VoiceBand(pl.LightningModule):
             var -
             torch.log(var) -1 
         ).sum() / out.size(0)
-        loss = self.kl_lambda * KL + mse
+        marginal_likelihood = F.binary_cross_entropy(0.5*out+1,ans,reduction="sum")/out.size(0)
+        loss = marginal_likelihood + KL
+        #loss = self.kl_lambda * KL + mse
         self.log("loss",loss)
         self.log("mse",mse)
         self.log("mae",mae)
         self.log("KL div",KL)
+        self.log("Marginal likelihood",marginal_likelihood)
         return loss
 
     @torch.no_grad()
